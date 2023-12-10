@@ -33,19 +33,15 @@ contract RyptoX is ERC20, Ownable {
     mapping(address => uint256) private withdrawalRequests;
     address[] private purchaseRequesters;
     address[] private withdrawalRequesters;
-    WithdrawalRequest[] private withdrawalRequestDetails;
 
     bool internal operationalWindow = true;
-    mapping(address => bool) private isPurchaseRequesterMapping;
-
-    address payable public owner_rypto;
 
 
     event ContractFunded(address indexed funder, uint256 amount, uint256 indexed timestamp, uint256 indexed blockNumber);
     event TokenPriceUpdated(uint256 indexed newPrice, uint256 indexed timestamp, uint256 indexed blockNumber);
     event PurchaseRequested(address indexed buyer, uint256 amount, uint256 totalAmount, uint256 indexed timestamp, uint256 indexed blockNumber);
     event PurchaseCancelled(address indexed buyer, uint256 amountRefunded, uint256 indexed timestamp, uint256 indexed blockNumber);
-    event WithdrawalRequested(address indexed owner, uint256 amountRequested, uint256 indexed timestamp, uint256 indexed blockNumber);
+    event WithdrawalRequested(address indexed owner, uint256 amountRequested, uint256 totalAmount, uint256 indexed timestamp, uint256 indexed blockNumber);
     event WithdrawalCancelled(address indexed owner, uint256 indexed timestamp, uint256 indexed blockNumber);
     event WithdrawalExecuted(address indexed recipient, uint256 tokenAmountWithdrawn, uint256 amountWithdrawn, uint256 indexed timestamp, uint256 indexed blockNumber);
     event PurchaseExecuted(address indexed buyer, uint256 amountSpent, uint256 tokenAmount, uint256 change, uint256 indexed timestamp, uint256 indexed blockNumber);
@@ -59,7 +55,6 @@ contract RyptoX is ERC20, Ownable {
     constructor() ERC20("Rypto -X", "RYPX") {
         _mint(msg.sender, 0);
         tokenPrice = 1 ether;
-        owner_rypto = payable(msg.sender);
     }
 
     function mint(address account, uint256 amount) external onlyOwner {
@@ -167,55 +162,6 @@ contract RyptoX is ERC20, Ownable {
         return purchaseRequestDetails;
     }
 
-    function requestWithdrawal(uint256 amount) external operationalWindowIsOpen {
-        require(balanceOf(msg.sender) >= amount + withdrawalRequests[msg.sender], "Insufficient tokens for withdrawal");
-        withdrawalRequests[msg.sender] += amount;
-
-        // Add the requester to the list if not already present
-        if (!isWithdrawalRequester(msg.sender)) {
-            withdrawalRequesters.push(msg.sender);
-        }
-
-        // Add withdrawal details to the list
-        withdrawalRequestDetails.push(WithdrawalRequest(msg.sender, amount));
-
-        emit WithdrawalRequested(msg.sender, amount, block.timestamp, block.number);
-    }
-
-    function cancelWithdrawal() external {
-        address ownerAddress = msg.sender;
-        withdrawalRequests[ownerAddress] = 0;
-
-        // Remove the requester from the list
-        removeWithdrawalRequester(ownerAddress);
-
-        emit WithdrawalCancelled(ownerAddress, block.timestamp, block.number);
-    }
-
-    function executeWithdrawal(address recipient) external onlyOwner {
-        uint256 tokenAmountToWithdraw = withdrawalRequests[recipient];
-        uint256 amountToWithdraw = tokenAmountToWithdraw * tokenPrice;
-        require(tokenAmountToWithdraw > 0, "No funds requested for withdrawal");
-
-        _burn(recipient, tokenAmountToWithdraw);
-        withdrawalRequests[recipient] = 0;
-
-        // Perform the actual fund transfer to the owner
-        payable(address(this)).transfer(amountToWithdraw);
-
-        // Remove the requester from the list
-        removeWithdrawalRequester(recipient);
-
-        emit WithdrawalExecuted(recipient, tokenAmountToWithdraw, amountToWithdraw, block.timestamp, block.number);
-    }
-
-
-    // Function to get the list of withdrawal requesters
-    function getWithdrawalRequesters() external view returns (WithdrawalRequest[] memory) {
-        return withdrawalRequestDetails;
-    }
-
-
     function isPurchaseRequester(address requester) internal view returns (bool) {
         for (uint256 i = 0; i < purchaseRequesters.length; i++) {
             if (purchaseRequesters[i] == requester) {
@@ -236,7 +182,67 @@ contract RyptoX is ERC20, Ownable {
             }
         }
     }
-    
+
+    function requestWithdrawal(uint256 amount) external operationalWindowIsOpen {
+        require(balanceOf(msg.sender) >= amount + withdrawalRequests[msg.sender], "Insufficient tokens for withdrawal");
+        withdrawalRequests[msg.sender] += amount;
+
+        // Add the requester to the list if not already present
+        if (!isWithdrawalRequester(msg.sender)) {
+            withdrawalRequesters.push(msg.sender);
+        }
+
+        emit WithdrawalRequested(msg.sender, amount, withdrawalRequests[msg.sender], block.timestamp, block.number);
+    }
+
+    function cancelWithdrawal() external {
+        address ownerAddress = msg.sender;
+        withdrawalRequests[ownerAddress] = 0;
+
+        // Remove the requester from the list
+        removeWithdrawalRequester(ownerAddress);
+
+        emit WithdrawalCancelled(ownerAddress, block.timestamp, block.number);
+    }
+
+    function executeWithdrawal(address recipient) external onlyOwner {
+
+        uint256 tokenAmountToWithdraw = withdrawalRequests[recipient];
+        require(tokenAmountToWithdraw > 0, "No funds requested for withdrawal");
+        
+        uint256 amountToWithdraw = (tokenAmountToWithdraw * tokenPrice ) / 1 ether;
+        
+
+        _burn(recipient, tokenAmountToWithdraw);
+        withdrawalRequests[recipient] = 0;
+
+        // Perform the actual fund transfer to the owner
+        address payable _to = payable(recipient);
+        (bool success, ) = _to.call{value: amountToWithdraw}("");
+        require(success, "Transfer to recipient failed in Withdrawal");
+
+        // Remove the requester from the list
+        removeWithdrawalRequester(recipient);
+
+        emit WithdrawalExecuted(recipient, tokenAmountToWithdraw, amountToWithdraw, block.timestamp, block.number);
+    }
+
+
+    // Function to get the list of withdrawal requesters
+    function getWithdrawalRequesters() external view returns (WithdrawalRequest[] memory) {
+        //PurchaseRequest[] memory purchaseRequestDetails = new PurchaseRequest[](purchaseRequesters.length);
+        WithdrawalRequest[] memory withdrawalRequestDetails = new WithdrawalRequest[](withdrawalRequesters.length);
+
+        for (uint256 i = 0; i < withdrawalRequesters.length; i++) {
+            address buyer =  withdrawalRequesters[i];
+            uint256 amount = withdrawalRequests[buyer];
+
+            WithdrawalRequest memory requestDetail = WithdrawalRequest(buyer, amount);
+            withdrawalRequestDetails[i] = requestDetail;
+        }
+
+        return withdrawalRequestDetails;
+    }
 
     // Function to check if an address is in the list of withdrawal requesters
     function isWithdrawalRequester(address requester) internal view returns (bool) {
