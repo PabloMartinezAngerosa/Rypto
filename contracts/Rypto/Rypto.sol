@@ -45,6 +45,7 @@ contract RyptoX is ERC20, Ownable {
     event WithdrawalCancelled(address indexed owner, uint256 indexed timestamp, uint256 indexed blockNumber);
     event WithdrawalExecuted(address indexed recipient, uint256 tokenAmountWithdrawn, uint256 amountWithdrawn, uint256 indexed timestamp, uint256 indexed blockNumber);
     event PurchaseExecuted(address indexed buyer, uint256 amountSpent, uint256 tokenAmount, uint256 change, uint256 indexed timestamp, uint256 indexed blockNumber);
+    event OperationalWindowToggled(bool newStatus, uint256 indexed timestamp, uint256 indexed blockNumber);
 
     
     /**
@@ -77,6 +78,12 @@ contract RyptoX is ERC20, Ownable {
     // Function to open or close the operational window, only callable by the owner
     function toggleOperationalWindow(bool _open) external onlyOwner {
         operationalWindow = _open;
+        emit OperationalWindowToggled(_open, block.timestamp, block.number);
+    }
+
+    // Función para obtener el estado actual de operationalWindow
+    function getOperationalWindowStatus() public view returns (bool) {
+        return operationalWindow;
     }
 
     /*
@@ -119,30 +126,29 @@ contract RyptoX is ERC20, Ownable {
     }
 
     function executePurchase(address buyer) external onlyOwner {
-        // Obtener la cantidad solicitada por el usuario
         uint256 purchaseAmount = purchaseRequests[buyer];
 
-        // Verificar que haya una compra pendiente
         require(purchaseAmount > 0, "No pending purchase");
 
-        uint256 amount = purchaseAmount / tokenPrice;
-        uint256 tokenAmount = amount * (10**uint256(decimals()));
-        console.log("Token Amount to mint :", tokenAmount);
-        _mint(buyer, tokenAmount);
+        uint256 amount_wei_rypto_token = purchaseAmount * 1 ether / tokenPrice;
+        console.log("Token Amount to mint :", amount_wei_rypto_token);
+        
 
-        uint256 change = purchaseAmount - (amount * tokenPrice);
+        uint256 change = purchaseAmount - (amount_wei_rypto_token * tokenPrice / 1 ether);
 
         if (change > 0) {
             address payable buyerAddress = payable(buyer);
-            buyerAddress.transfer(change);
+            (bool success, ) = buyerAddress.call{value: change}("");
+            require(success, "Transfer change to buyer failed");
             console.log("Change :", change);
         }
+        // mint in wei
+        _mint(buyer, amount_wei_rypto_token);
 
-        // Limpiar la solicitud de compra después de ejecutarla
         purchaseRequests[buyer] = 0;
-        removePurchaseRequester(msg.sender);
+        removePurchaseRequester(buyer);
 
-        emit PurchaseExecuted(buyer, purchaseAmount, tokenAmount, change, block.timestamp, block.number);
+        emit PurchaseExecuted(buyer, purchaseAmount, amount_wei_rypto_token, change, block.timestamp, block.number);
     }
 
     // Function to get the mapping of purchase requesters
